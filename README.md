@@ -10,6 +10,7 @@ A beginner-friendly tutorial to learn Docker by containerizing a simple HTML web
 - [Step-by-Step Guide](#step-by-step-guide)
 - [Understanding Docker Concepts](#understanding-docker-concepts)
 - [Container Internals](#container-internals)
+- [AWS ECR Deployment with GitHub Actions](#aws-ecr-deployment-with-github-actions)
 - [Cleanup](#cleanup)
 - [Troubleshooting](#troubleshooting)
 
@@ -46,6 +47,9 @@ docker --version
 ```
 PracticalFirst-Docker/
 │
+├── .github/
+│   └── workflows/
+│       └── deploy.yml  # GitHub Actions workflow for AWS ECR
 ├── index.html          # Your HTML webpage
 ├── Dockerfile          # Docker configuration
 └── README.md           # This file
@@ -204,7 +208,193 @@ Understanding the flow:
 1. Browser requests → `localhost:8080`
 2. Docker maps → Container port `80`
 3. NGINX receives request
-4. NGINX serves `index.html`
+4. ☁️ AWS ECR Deployment with GitHub Actions
+
+This section covers how to automatically build and push your Docker image to AWS Elastic Container Registry (ECR) using GitHub Actions.
+
+### Prerequisites for AWS ECR
+
+1. **AWS Account** - [Sign up here](https://aws.amazon.com/)
+2. **AWS CLI installed** (optional, for local testing)
+3. **GitHub repository** for your project
+
+### Step 1: Create AWS ECR Repository
+
+#### Option A: Using AWS Console
+
+1. Go to [AWS ECR Console](https://console.aws.amazon.com/ecr/)
+2. Click **Create repository**
+3. Set repository name: `my-html-app`
+4. Leave settings as default
+5. Click **Create repository**
+
+#### Option B: Using AWS CLI
+
+```bash
+aws ecr create-repository \
+    --repository-name my-html-app \
+    --region us-east-1
+```
+
+### Step 2: Create AWS IAM User for GitHub Actions
+
+1. Go to [AWS IAM Console](https://console.aws.amazon.com/iam/)
+2. Click **Users** → **Add users**
+3. Username: `github-actions-ecr`
+4. Select **Access key - Programmatic access**
+5. Click **Next: Permissions**
+6. Click **Attach existing policies directly**
+7. Search and select: `AmazonEC2ContainerRegistryPowerUser`
+8. Click **Next** → **Create user**
+9. **IMPORTANT**: Save the **Access Key ID** and **Secret Access Key**
+
+### Step 3: Add GitHub Secrets
+
+1. Go to your GitHub repository
+2. Navigate to **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret**
+4. Add the following secrets:
+
+| Secret Name | Value |
+|-------------|-------|
+| `AWS_ACCESS_KEY_ID` | Your AWS Access Key ID |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS Secret Access Key |
+
+### Step 4: Configure Workflow (Already Created!)
+
+The workflow file is already created at [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
+
+**Workflow triggers:**
+- ✅ Push to `main` or `master` branch
+- ✅ Pull request to `main` or `master` branch
+- ✅ Manual trigger via GitHub UI
+
+**What it does:**
+1. Checks out your code
+2. Configures AWS credentials
+3. Logs into Amazon ECR
+4. Builds Docker image
+5. Tags image with Git commit SHA and `latest`
+6. Deploy to AWS ECS/Fargate using the ECR image
+6. Set up automated testing in GitHub Actions
+7. Implement multi-stage Docker builds
+
+### Step 5: Customize Configuration
+
+Edit [.github/workflows/deploy.yml](.github/workflows/deploy.yml) if needed:
+
+```yaml
+env:
+  AWS_REGION: us-east-1        # Change to your AWS region
+  ECR_REPOSITORY: my-html-app  # Change to your ECR repo name
+```
+
+### Step 6: Push to GitHub and Deploy
+
+```bash
+# Initialize git (if not already done)
+git init
+
+# Add all files
+git add .
+
+# Commit
+git commit -m "Initial commit with AWS ECR deployment"
+
+# Add remote (replace with your repo URL)
+git remote add origin https://github.com/yourusername/PracticalFirst-Docker.git
+
+# Push to GitHub
+git push -u origin main
+```
+
+### Step 7: Verify Deployment
+
+1. Go to your GitHub repository
+2. Click **Actions** tab
+3. You should see the workflow running
+4. Once complete, go to AWS ECR Console
+5. Your image should be visible in the `my-html-app` repository
+
+### Pulling Image from ECR
+
+To use the image from ECR:
+
+```bash
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
+
+# Pull the image
+docker pull YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/my-html-app:latest
+
+# Run it
+docker run -d -p 8080:80 YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/my-html-app:latest
+```
+
+Replace `YOUR_AWS_ACCOUNT_ID` with your actual AWS account ID.
+
+### GitHub Actions Workflow Explained
+
+```yaml
+on:
+  push:
+    branches: [main, master]  # Trigger on push to main/master
+  workflow_dispatch:           # Allow manual trigger
+```
+
+**Steps breakdown:**
+
+| Step | What it does |
+|------|--------------|
+| `checkout` | Gets your code |
+| `configure-aws-credentials` | Authenticates with AWS using secrets |
+| `login-ecr` | Logs into ECR registry |
+| `build-tag-push` | Builds Docker image, tags it, and pushes to ECR |
+
+### Image Tagging Strategy
+
+Each push creates **two tags**:
+1. **Git SHA** (e.g., `abc123def`) - Specific version
+2. **latest** - Always points to most recent build
+
+Benefits:
+- ✅ Rollback to specific versions
+- ✅ Always have a `latest` version
+- ✅ Track which Git commit produced which image
+
+### Cost Considerations
+
+**AWS ECR Pricing:**
+- First 500 MB/month: **FREE**
+- Storage: ~$0.10/GB per month
+- Data transfer: First 1 GB/month FREE
+
+This simple app (~10 MB) will stay in the free tier!
+
+### Troubleshooting AWS ECR
+
+#### Authentication Failed
+```bash
+# Verify AWS credentials
+aws sts get-caller-identity
+```
+
+#### Repository Not Found
+Check ECR repository name matches the workflow:
+```yaml
+ECR_REPOSITORY: my-html-app  # Must match ECR repo name
+```
+
+#### GitHub Actions Permission Denied
+- Verify AWS IAM user has `AmazonEC2ContainerRegistryPowerUser` policy
+- Check GitHub secrets are correctly set
+
+#### Workflow Not Triggering
+- Ensure you're pushing to `main` or `master` branch
+- Check workflow file is in `.github/workflows/` directory
+- Verify YAML syntax is correct
+
+## NGINX serves `index.html`
 5. Response travels back to browser
 
 ## 🛑 Cleanup
